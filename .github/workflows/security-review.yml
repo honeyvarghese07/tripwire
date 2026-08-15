@@ -1,0 +1,48 @@
+name: Tripwire (security review, local LLM)
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: write   # needed to post the review comment
+
+jobs:
+  security-review:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Python dependencies
+        run: pip install -r requirements.txt
+
+      # Ollama isn't preinstalled on GitHub-hosted runners, so we install
+      # it fresh every run. This is the main tradeoff of using a local
+      # model in CI instead of a hosted API: no API key/cost, but this
+      # install + model pull step adds real time to every PR check.
+      - name: Install Ollama
+        run: curl -fsSL https://ollama.com/install.sh | sh
+
+      - name: Start Ollama server
+        run: |
+          ollama serve &
+          # give the server a moment to come up before anything tries to use it
+          for i in $(seq 1 30); do
+            curl -sf http://localhost:11434 >/dev/null && break
+            sleep 1
+          done
+
+      - name: Pull model
+        run: ollama pull llama3.2
+
+      - name: Run security review
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_EVENT_PATH: ${{ github.event_path }}
+        run: python src/reviewer.py
